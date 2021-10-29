@@ -115,7 +115,7 @@ func handleValloxEvent(valloxDev *vallox.Vallox, e vallox.Event, cache map[byte]
 	if val, ok := cache[e.Register]; !ok {
 		// First time we receive this value, send Home Assistant discovery
 		announceRawData(mqtt, e.Register)
-	} else if val.value.RawValue == e.RawValue && time.Since(val.time) < time.Duration(-15)*time.Minute {
+	} else if val.value.RawValue == e.RawValue && time.Since(val.time) < time.Duration(15)*time.Minute {
 		// Some values are not published by the device, so manually republish to keep the device online
 		resendOldValues(valloxDev, mqtt, cache)
 		// we already have that value and have recently published it, no need to publish to mqtt
