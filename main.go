@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,7 @@ type cacheEntry struct {
 
 const (
 	topicFanSpeed            = "vallox/fan/speed"
+	topicFanSpeedSet         = "vallox/fan/set"
 	topicTempIncomingIside   = "vallox/temp/incoming/inside"
 	topicTempIncomingOutside = "vallox/temp/incoming/outside"
 	topicTempOutgoingInside  = "vallox/temp/outgoing/inside"
@@ -37,12 +39,6 @@ var topicMap = map[byte]string{
 	vallox.TempOutgoingOutside: topicTempOutgoingOutside,
 }
 
-var (
-	logDebug *log.Logger
-	logInfo  *log.Logger
-	logError *log.Logger
-)
-
 type Config struct {
 	SerialDevice string `envconfig:"serial_device" required:"true"`
 	MqttUrl      string `envconfig:"mqtt_url" required:"true"`
@@ -50,9 +46,26 @@ type Config struct {
 	MqttPwd      string `envconfig:"mqtt_password"`
 	MqttClientId string `envconfig:"mqtt_client_id" default:"vallox"`
 	Debug        bool   `envconfig:"debug" default:"false"`
+	EnableWrite  bool   `envconfig:"enable_write" default:"false"`
+	SpeedMin     byte   `envconfig:"speed_min" default:"1"`
+	EnableRaw    bool   `envconfig:"enable_raw" default:"false"`
 }
 
-var config Config
+var (
+	config Config
+
+	logDebug *log.Logger
+	logInfo  *log.Logger
+	logError *log.Logger
+
+	updateSpeed          byte
+	updateSpeedRequested time.Time
+	currentSpeed         byte
+	currentSpeedUpdated  time.Time
+
+	speedUpdateRequest = make(chan byte, 10)
+	speedUpdateSend    = make(chan byte, 10)
+)
 
 func init() {
 
@@ -72,17 +85,95 @@ func main() {
 
 	cache := make(map[byte]cacheEntry)
 
-	announceMe(mqtt, cache)
+	announceMeToMqttDiscovery(mqtt, cache)
 
 	initHAStatusHandler(mqtt, cache)
+	initChangeHandler(mqtt, valloxDevice)
 
 	for {
-		handleEvent(valloxDevice, <-valloxDevice.Events(), cache, mqtt)
+		select {
+		case event := <-valloxDevice.Events():
+			handleValloxEvent(valloxDevice, event, cache, mqtt)
+		case request := <-speedUpdateRequest:
+			if hasSameRecentSpeed(request) {
+				continue
+			}
+			updateSpeed = request
+			updateSpeedRequested = time.Now()
+			speedUpdateSend <- request
+		case <-speedUpdateSend:
+			sendSpeed(valloxDevice)
+		}
 	}
 }
 
-func initHAStatusHandler(mqtt mqttClient.Client, cache map[byte]cacheEntry) {
-	mqtt.Subscribe("homeassistant/status", 0, createHAStatusHandler(mqtt, cache))
+func handleValloxEvent(valloxDev *vallox.Vallox, e vallox.Event, cache map[byte]cacheEntry, mqtt mqttClient.Client) {
+	if !valloxDev.ForMe(e) {
+		// Ignore values not addressed for me
+		return
+	}
+
+	now := time.Now()
+	validTime := now.Add(time.Duration(-15) * time.Minute)
+
+	if val, ok := cache[e.Register]; !ok {
+		// First time we receive this value, send Home Assistant discovery
+		announceRawData(mqtt, e.Register)
+	} else if val.value.RawValue == e.RawValue && val.time.After(validTime) {
+		// Some values are not published by the device, so manually republish to keep the device online
+		resendOldValues(valloxDev, mqtt, cache)
+		// we already have that value and have recently published it, no need to publish to mqtt
+		return
+	}
+
+	cached := cacheEntry{time: now, value: e}
+	cache[e.Register] = cached
+
+	if e.Register == vallox.FanSpeed {
+		currentSpeed = byte(e.Value)
+		currentSpeedUpdated = time.Now()
+	}
+
+	go publishValue(mqtt, cached.value)
+}
+
+func sendSpeed(valloxDevice *vallox.Vallox) {
+	if time.Since(updateSpeedRequested) < time.Duration(5)*time.Second {
+		// Less than second old, retry later
+		go func() {
+			time.Sleep(time.Duration(1000) * time.Millisecond)
+			speedUpdateSend <- updateSpeed
+		}()
+	} else if currentSpeed != updateSpeed || time.Since(currentSpeedUpdated) > 10*time.Second {
+		logDebug.Printf("sending speed update to %x", updateSpeed)
+		currentSpeed = updateSpeed
+		currentSpeedUpdated = time.Now()
+		valloxDevice.SetSpeed(updateSpeed)
+		time.Sleep(time.Duration(20) * time.Millisecond)
+		valloxDevice.Query(vallox.FanSpeed)
+	}
+}
+
+func hasSameRecentSpeed(request byte) bool {
+	return currentSpeed == request && time.Since(currentSpeedUpdated) < time.Duration(10)*time.Second
+}
+
+func createChangeHandler(mqtt mqttClient.Client, vallox *vallox.Vallox) func(mqttClient.Client, mqttClient.Message) {
+	return func(mqtt mqttClient.Client, msg mqttClient.Message) {
+		body := string(msg.Payload())
+		topic := msg.Topic()
+		logInfo.Printf("received change status %s to %s", body, topic)
+		if topic == topicFanSpeedSet {
+			spd, err := strconv.ParseInt(body, 0, 8)
+			if err != nil {
+				logError.Printf("cannot parse speed from body %s", body)
+			} else {
+				speedUpdateRequest <- byte(spd)
+			}
+		} else {
+			logError.Printf("unknown set topic %s", topic)
+		}
+	}
 }
 
 func createHAStatusHandler(mqtt mqttClient.Client, cache map[byte]cacheEntry) func(mqttClient.Client, mqttClient.Message) {
@@ -90,8 +181,8 @@ func createHAStatusHandler(mqtt mqttClient.Client, cache map[byte]cacheEntry) fu
 		body := string(msg.Payload())
 		logInfo.Printf("received HA status %s", body)
 		if body == "online" {
-			// ha became online, send discovery
-			go announceMe(mqtt, cache)
+			// HA became online, send discovery so it knows about entities
+			go announceMeToMqttDiscovery(mqtt, cache)
 		} else if body != "offline" {
 			logInfo.Printf("unknown HA status message %s", body)
 		}
@@ -99,9 +190,9 @@ func createHAStatusHandler(mqtt mqttClient.Client, cache map[byte]cacheEntry) fu
 }
 
 func connectVallox() *vallox.Vallox {
-	cfg := vallox.Config{Device: config.SerialDevice}
+	cfg := vallox.Config{Device: config.SerialDevice, EnableWrite: config.EnableWrite, LogDebug: logDebug}
 
-	logInfo.Printf("connecting to vallox serial port %s", cfg.Device)
+	logInfo.Printf("connecting to vallox serial port %s write enabled: %v", cfg.Device, cfg.EnableWrite)
 
 	valloxDevice, err := vallox.Open(cfg)
 
@@ -142,31 +233,15 @@ func connectMqtt() mqttClient.Client {
 	return c
 }
 
-func handleEvent(vallox *vallox.Vallox, e vallox.Event, cache map[byte]cacheEntry, mqtt mqttClient.Client) {
-	if !vallox.ForMe(e) {
-		// Ignore values not addressed for me
-		return
-	}
-
-	now := time.Now()
-	validTime := now.Add(time.Duration(-15) * time.Minute)
-
-	if val, ok := cache[e.Register]; !ok {
-		// First time we receive this value, send Home Assistant discovery
-		announceRawData(mqtt, e.Register)
-	} else if val.value.RawValue == e.RawValue && val.time.After(validTime) {
-		// we already have that value and have recently published it
-		verifyOldValues(vallox, mqtt, cache)
-		return
-	}
-
-	cached := cacheEntry{time: now, value: e}
-	cache[e.Register] = cached
-
-	publishValue(mqtt, cached.value)
+func initHAStatusHandler(mqtt mqttClient.Client, cache map[byte]cacheEntry) {
+	mqtt.Subscribe("homeassistant/status", 0, createHAStatusHandler(mqtt, cache))
 }
 
-func verifyOldValues(device *vallox.Vallox, mqtt mqttClient.Client, cache map[byte]cacheEntry) {
+func initChangeHandler(mqtt mqttClient.Client, vallox *vallox.Vallox) {
+	mqtt.Subscribe("vallox/fan/set", 0, createChangeHandler(mqtt, vallox))
+}
+
+func resendOldValues(device *vallox.Vallox, mqtt mqttClient.Client, cache map[byte]cacheEntry) {
 	// Speed is not automatically published by Vallox, so manually refresh the value
 	now := time.Now()
 	validTime := now.Add(time.Duration(-15) * time.Minute)
@@ -196,26 +271,44 @@ func publish(mqtt mqttClient.Client, topic string, msg interface{}) {
 	}()
 }
 
-func discoveryMsg(uid string, name string, deviceClass string, stateTopic string) []byte {
+func discoveryMsg(uid string, name string, stateTopic string, commandTopic string) []byte {
 	msg := make(map[string]interface{})
 	msg["unique_id"] = uid
 	msg["name"] = name
+
 	dev := make(map[string]string)
 	msg["device"] = dev
 	dev["identifiers"] = "vallox"
 	dev["manufacturer"] = "Vallox"
 	dev["name"] = "Vallox Digit SE"
 	dev["model"] = "Digit SE"
-	if deviceClass != "" {
-		msg["device_class"] = deviceClass
+
+	if stateTopic != "" {
+		msg["state_topic"] = stateTopic
 	}
-	msg["expire_after"] = 1800
-	msg["state_topic"] = stateTopic
+	if commandTopic != "" {
+		msg["command_topic"] = commandTopic
+	}
+
+	if uid == "vallox_fan_select" {
+		min := int(config.SpeedMin)
+		var options []string
+		for i := min; i <= 8; i++ {
+			options = append(options, strconv.FormatInt(int64(i), 10))
+		}
+		msg["options"] = options
+		msg["icon"] = "mdi:fan"
+	} else if uid == "vallox_fan_speed" {
+		msg["expire_after"] = 1800
+		msg["icon"] = "mdi:fan"
+	}
+
 	if strings.HasPrefix(uid, "vallox_temp") {
 		msg["unit_of_measurement"] = "°C"
+		msg["state_class"] = "measurement"
+		msg["expire_after"] = 1800
+		msg["device_class"] = "temperature"
 	}
-	msg["state_class"] = "measurement"
-	//msg["force_update"] = true
 
 	jsonm, err := json.Marshal(msg)
 	if err != nil {
@@ -224,14 +317,15 @@ func discoveryMsg(uid string, name string, deviceClass string, stateTopic string
 	return jsonm
 }
 
-func announceMe(mqtt mqttClient.Client, cache map[byte]cacheEntry) {
-	publishDiscovery(mqtt, "vallox_fan_speed", "Fan speed", "", topicFanSpeed)
-	publishDiscovery(mqtt, "vallox_temp_incoming_outside", "Temperature incoming outside", "temperature", topicTempIncomingOutside)
-	publishDiscovery(mqtt, "vallox_temp_incoming_insise", "Temperature incoming inside", "temperature", topicTempIncomingIside)
-	publishDiscovery(mqtt, "vallox_temp_outgoing_inside", "Temperature outgoing inside", "temperature", topicTempOutgoingInside)
-	publishDiscovery(mqtt, "vallox_temp_outgoing_outside", "Temperature outgoing outside", "temperature", topicTempOutgoingOutside)
+func announceMeToMqttDiscovery(mqtt mqttClient.Client, cache map[byte]cacheEntry) {
+	publishDiscovery(mqtt, "vallox_fan_speed", "Vallox speed", topicFanSpeed)
+	publishDiscoveryFanSelect(mqtt, "vallox_fan_select", "Vallox speed select", topicFanSpeed)
+	publishDiscovery(mqtt, "vallox_temp_incoming_outside", "Vallox outdoor temperature", topicTempIncomingOutside)
+	publishDiscovery(mqtt, "vallox_temp_incoming_insise", "Vallox incoming temperature", topicTempIncomingIside)
+	publishDiscovery(mqtt, "vallox_temp_outgoing_inside", "Vallox interior temperature", topicTempOutgoingInside)
+	publishDiscovery(mqtt, "vallox_temp_outgoing_outside", "Vallox exhaust temperature", topicTempOutgoingOutside)
 
-	for reg, _ := range cache {
+	for reg := range cache {
 		announceRawData(mqtt, reg)
 	}
 }
@@ -240,12 +334,18 @@ func announceRawData(mqtt mqttClient.Client, register byte) {
 	uid := fmt.Sprintf("vallox_raw_%x", register)
 	name := fmt.Sprintf("Vallox raw %x", register)
 	stateTopic := fmt.Sprintf("vallox/raw/%x", register)
-	publishDiscovery(mqtt, uid, name, "", stateTopic)
+	publishDiscovery(mqtt, uid, name, stateTopic)
 }
 
-func publishDiscovery(mqtt mqttClient.Client, uid string, name string, deviceClass string, stateTopic string) {
+func publishDiscovery(mqtt mqttClient.Client, uid string, name string, stateTopic string) {
 	discoveryTopic := fmt.Sprintf("homeassistant/sensor/%s/config", uid)
-	msg := discoveryMsg(uid, name, deviceClass, stateTopic)
+	msg := discoveryMsg(uid, name, stateTopic, "")
+	publish(mqtt, discoveryTopic, msg)
+}
+
+func publishDiscoveryFanSelect(mqtt mqttClient.Client, uid string, name string, stateTopic string) {
+	discoveryTopic := fmt.Sprintf("homeassistant/select/%s/config", uid)
+	msg := discoveryMsg(uid, name, stateTopic, topicFanSpeedSet)
 	publish(mqtt, discoveryTopic, msg)
 }
 
