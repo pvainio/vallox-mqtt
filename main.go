@@ -109,29 +109,25 @@ func main() {
 
 func handleValloxEvent(valloxDev *vallox.Vallox, e vallox.Event, cache map[byte]cacheEntry, mqtt mqttClient.Client) {
 	if !valloxDev.ForMe(e) {
-		// Ignore values not addressed for me
-		return
+		return // Ignore values not addressed for me
 	}
-
-	now := time.Now()
-	validTime := now.Add(time.Duration(-15) * time.Minute)
 
 	if val, ok := cache[e.Register]; !ok {
 		// First time we receive this value, send Home Assistant discovery
 		announceRawData(mqtt, e.Register)
-	} else if val.value.RawValue == e.RawValue && val.time.After(validTime) {
+	} else if val.value.RawValue == e.RawValue && time.Since(val.time) < time.Duration(-15)*time.Minute {
 		// Some values are not published by the device, so manually republish to keep the device online
 		resendOldValues(valloxDev, mqtt, cache)
 		// we already have that value and have recently published it, no need to publish to mqtt
 		return
 	}
 
-	cached := cacheEntry{time: now, value: e}
+	cached := cacheEntry{time: time.Now(), value: e}
 	cache[e.Register] = cached
 
 	if e.Register == vallox.FanSpeed {
 		currentSpeed = byte(e.Value)
-		currentSpeedUpdated = time.Now()
+		currentSpeedUpdated = cached.time
 	}
 
 	go publishValue(mqtt, cached.value)
