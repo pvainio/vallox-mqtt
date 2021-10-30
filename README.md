@@ -25,6 +25,10 @@ Only tested with:
 
 Might work with other Vallox devices with rs485 bus.  There probably are some differences between different devices.  If there are those probably are easy to adapt to.
 
+The application itself has been tested running on Raspberry Pi 3, but probably works just fine with Raspberry Zero or anything running linux.
+
+Quality RS485 adapter should be used, there can be strange problems with low quality ones.
+
 ## Example usecase
 
 Can be used to monitor and command Vallox ventilation device with Home Assistant.  Raspberry Pi with properer usb to rs485 adapter can act as a gateway between Vallox and MQTT (and Home Assistant).  Automation can be built to increase the speed in case of high CO2 or high humidity even if the Vallox device is not installed with co2 and humidity sensors.
