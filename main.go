@@ -252,7 +252,9 @@ func publishValue(mqtt mqttClient.Client, event vallox.Event) {
 		publish(mqtt, topic, fmt.Sprintf("%d", event.Value))
 	}
 
-	publish(mqtt, fmt.Sprintf("vallox/raw/%x", event.Register), fmt.Sprintf("%d", event.RawValue))
+	if config.EnableRaw {
+		publish(mqtt, fmt.Sprintf("vallox/raw/%x", event.Register), fmt.Sprintf("%d", event.RawValue))
+	}
 }
 
 func publish(mqtt mqttClient.Client, topic string, msg interface{}) {
@@ -327,6 +329,9 @@ func announceMeToMqttDiscovery(mqtt mqttClient.Client, cache map[byte]cacheEntry
 }
 
 func announceRawData(mqtt mqttClient.Client, register byte) {
+	if !config.EnableRaw {
+		return
+	}
 	uid := fmt.Sprintf("vallox_raw_%x", register)
 	name := fmt.Sprintf("Vallox raw %x", register)
 	stateTopic := fmt.Sprintf("vallox/raw/%x", register)

@@ -1,8 +1,12 @@
-# Vallox RS485 MQTT gateway
+# Vallox RS485 MQTT gateway for Home Assistant
 
 ## Overview
 
 This rs485 mqtt gateway can be used to publish events from Vallox rs485 serial bus to mqtt and send commands to Vallox devices via mqtt.
+
+It supports Home Assistant MQTT Discovery but can also be used without Home Assistant.
+
+Only requirement is MQTT Broker to connect to.
 
 ## Supported features
 
@@ -73,4 +77,15 @@ export MQTT_URL=tcp://localhost:8883
 
 ./vallox-mqtt
 ```
+
+## MQTT Topics used
+
+- homeassistant/status subscribe to HA status changes
+- vallox/fan/set subscribe to fan speed commands
+- vallox/fan/speed publish fan speeds
+- vallox/temperature_incoming_outside Outdoor temperature
+- vallox/temperature_incoming_inside Incoming temperature
+- vallox/temperature_outgoing_inside Inside temperature
+- vallox/temperature_outgoing_outside Exhaust temperature
+- vallox/raw/# Raw register value changes (if raw values are enabled)
 
