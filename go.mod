@@ -2,11 +2,9 @@ module vallox-mqtt
 
 go 1.17
 
-replace github.com/pvainio/vallox-rs485 => ../vallox
-
 require (
 	github.com/eclipse/paho.mqtt.golang v1.3.5
-	github.com/pvainio/vallox-rs485 v0.0.3
+	github.com/pvainio/vallox-rs485 v0.0.2
 )
 
 require (
