@@ -65,6 +65,8 @@ var (
 
 	speedUpdateRequest = make(chan byte, 10)
 	speedUpdateSend    = make(chan byte, 10)
+
+	homeassistantStatus = make(chan string, 10)
 )
 
 func init() {
@@ -87,9 +89,6 @@ func main() {
 
 	announceMeToMqttDiscovery(mqtt, cache)
 
-	initHAStatusHandler(mqtt, cache)
-	initChangeHandler(mqtt, valloxDevice)
-
 	for {
 		select {
 		case event := <-valloxDevice.Events():
@@ -103,6 +102,13 @@ func main() {
 			speedUpdateSend <- request
 		case <-speedUpdateSend:
 			sendSpeed(valloxDevice)
+		case status := <-homeassistantStatus:
+			if status == "online" {
+				// HA became online, send discovery so it knows about entities
+				go announceMeToMqttDiscovery(mqtt, cache)
+			} else if status != "offline" {
+				logInfo.Printf("unknown HA status message %s", status)
+			}
 		}
 	}
 }
@@ -154,37 +160,6 @@ func hasSameRecentSpeed(request byte) bool {
 	return currentSpeed == request && time.Since(currentSpeedUpdated) < time.Duration(10)*time.Second
 }
 
-func createChangeHandler(mqtt mqttClient.Client, vallox *vallox.Vallox) func(mqttClient.Client, mqttClient.Message) {
-	return func(mqtt mqttClient.Client, msg mqttClient.Message) {
-		body := string(msg.Payload())
-		topic := msg.Topic()
-		logInfo.Printf("received change status %s to %s", body, topic)
-		if topic == topicFanSpeedSet {
-			spd, err := strconv.ParseInt(body, 0, 8)
-			if err != nil {
-				logError.Printf("cannot parse speed from body %s", body)
-			} else {
-				speedUpdateRequest <- byte(spd)
-			}
-		} else {
-			logError.Printf("unknown set topic %s", topic)
-		}
-	}
-}
-
-func createHAStatusHandler(mqtt mqttClient.Client, cache map[byte]cacheEntry) func(mqttClient.Client, mqttClient.Message) {
-	return func(mqtt mqttClient.Client, msg mqttClient.Message) {
-		body := string(msg.Payload())
-		logInfo.Printf("received HA status %s", body)
-		if body == "online" {
-			// HA became online, send discovery so it knows about entities
-			go announceMeToMqttDiscovery(mqtt, cache)
-		} else if body != "offline" {
-			logInfo.Printf("unknown HA status message %s", body)
-		}
-	}
-}
-
 func connectVallox() *vallox.Vallox {
 	cfg := vallox.Config{Device: config.SerialDevice, EnableWrite: config.EnableWrite, LogDebug: logDebug}
 
@@ -229,12 +204,27 @@ func connectMqtt() mqttClient.Client {
 	return c
 }
 
-func initHAStatusHandler(mqtt mqttClient.Client, cache map[byte]cacheEntry) {
-	mqtt.Subscribe("homeassistant/status", 0, createHAStatusHandler(mqtt, cache))
+func changeSpeedMessage(mqtt mqttClient.Client, msg mqttClient.Message) {
+	body := string(msg.Payload())
+	topic := msg.Topic()
+	logInfo.Printf("received speed change %s to %s", body, topic)
+	spd, err := strconv.ParseInt(body, 0, 8)
+	if err != nil {
+		logError.Printf("cannot parse speed from body %s", body)
+	} else {
+		speedUpdateRequest <- byte(spd)
+	}
 }
 
-func initChangeHandler(mqtt mqttClient.Client, vallox *vallox.Vallox) {
-	mqtt.Subscribe("vallox/fan/set", 0, createChangeHandler(mqtt, vallox))
+func haStatusMessage(mqtt mqttClient.Client, msg mqttClient.Message) {
+	body := string(msg.Payload())
+	homeassistantStatus <- body
+}
+
+func subscribe(mqtt mqttClient.Client) {
+	logDebug.Print("subscribing to topics")
+	mqtt.Subscribe("homeassistant/status", 0, haStatusMessage)
+	mqtt.Subscribe("vallox/fan/set", 0, changeSpeedMessage)
 }
 
 func resendOldValues(device *vallox.Vallox, mqtt mqttClient.Client, cache map[byte]cacheEntry) {
@@ -299,6 +289,7 @@ func discoveryMsg(uid string, name string, stateTopic string, commandTopic strin
 	} else if uid == "vallox_fan_speed" {
 		msg["expire_after"] = 1800
 		msg["icon"] = "mdi:fan"
+		msg["state_class"] = "measurement"
 	}
 
 	if strings.HasPrefix(uid, "vallox_temp") {
@@ -358,6 +349,7 @@ func connectionLostHandler(client mqttClient.Client, err error) {
 func connectHandler(client mqttClient.Client) {
 	options := client.OptionsReader()
 	logInfo.Printf("MQTT connected to %s", options.Servers())
+	subscribe(client)
 }
 
 func reconnectHandler(client mqttClient.Client, options *mqttClient.ClientOptions) {
