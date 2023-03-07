@@ -6,6 +6,8 @@ github.com/kelseyhightower/envconfig v1.4.0 h1:Im6hONhd3pLkfDFsbRgu68RDNkGF1r3dv
 github.com/kelseyhightower/envconfig v1.4.0/go.mod h1:cccZRl6mQpaq41TPp5QxidR+Sa3axMbJDNb//FQX6Gg=
 github.com/pvainio/vallox-rs485 v0.0.3 h1:0gyJopiTTbPclu+J8sYvBIs48GeEM7s2JGPrJfwtnG4=
 github.com/pvainio/vallox-rs485 v0.0.3/go.mod h1:OaoXLfmnDna8DTEFRVNCeCbB21QC+x3z05kV9pX0C/g=
+github.com/pvainio/vallox-rs485 v0.0.4 h1:nvlCa9arfJMlrxcUsgev1NnabekHgk6C8Jft+WQ6qjY=
+github.com/pvainio/vallox-rs485 v0.0.4/go.mod h1:gGg7X93MjVm/hZr1igmHm1QOHp3epgX95mCaWt7/p04=
 github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07 h1:UyzmZLoiDWMRywV4DUYb9Fbt8uiOSooupjTq10vpvnU=
 github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07/go.mod h1:kDXzergiv9cbyO7IOYJZWg1U88JhDg3PB6klq9Hg2pA=
 github.com/yuin/goldmark v1.4.13/go.mod h1:6yULJ656Px+3vBD8DxQVa3kxgyrAnzto9xy5taEt/CY=
