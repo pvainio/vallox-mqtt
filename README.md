@@ -69,6 +69,11 @@ Application is configure with environment variables
 | ENABLE_RAW      |          | false   | enable sending raw events to mqtt, otherwise only known changes are sent |
 | OBJECT_ID       |          | true    | Send object_id with HA Auto Discovery for HA entity names |
 
+## Multiple Devices
+
+Running multiple devices is supported (although not tested).  Currently this requires
+running own process for each device.  DEVICE_ID and DEVICE_NAME shoud be set uniquely for each device, like DEVICE_ID=vallox1, DEVICE_NAME="Vallox 1" for one device and DEVICE_ID=vallox2, DEVICE_NAME="Vallox 2" for other device.
+
 ## Usage
 
 For example with following script
@@ -79,6 +84,9 @@ For example with following script
 export SERIAL_DEVICE=/dev/ttyUSB0
 # Change to your real mqtt url
 export MQTT_URL=tcp://localhost:8883
+# Set device id and name, in case of multiple devices
+export DEVICE_ID=valloxupstairs
+export DEVICE_NAME="Vallox Upstairs"
 
 ./vallox-mqtt
 ```
