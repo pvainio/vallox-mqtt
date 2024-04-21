@@ -3,7 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"strconv"
@@ -23,12 +23,13 @@ type cacheEntry struct {
 }
 
 const (
-	topicFanSpeed            = "vallox/fan/speed"
-	topicFanSpeedSet         = "vallox/fan/set"
-	topicTempIncomingIside   = "vallox/temp/incoming/inside"
-	topicTempIncomingOutside = "vallox/temp/incoming/outside"
-	topicTempOutgoingInside  = "vallox/temp/outgoing/inside"
-	topicTempOutgoingOutside = "vallox/temp/outgoing/outside"
+	topicFanSpeed            = "fan/speed"
+	topicFanSpeedSet         = "fan/set"
+	topicTempIncomingIside   = "temp/incoming/inside"
+	topicTempIncomingOutside = "temp/incoming/outside"
+	topicTempOutgoingInside  = "temp/outgoing/inside"
+	topicTempOutgoingOutside = "temp/outgoing/outside"
+	topicRaw                 = "raw/%x"
 )
 
 var topicMap = map[byte]string{
@@ -44,11 +45,14 @@ type Config struct {
 	MqttUrl      string `envconfig:"mqtt_url" required:"true"`
 	MqttUser     string `envconfig:"mqtt_user"`
 	MqttPwd      string `envconfig:"mqtt_password"`
-	MqttClientId string `envconfig:"mqtt_client_id" default:"vallox"`
+	MqttClientId string `envconfig:"mqtt_client_id"`
+	DeviceId     string `envconfig:"device_id" default:"vallox"`
+	DeviceName   string `envconfig:"device_name" default:"Vallox"`
 	Debug        bool   `envconfig:"debug" default:"false"`
 	EnableWrite  bool   `envconfig:"enable_write" default:"false"`
 	SpeedMin     byte   `envconfig:"speed_min" default:"1"`
 	EnableRaw    bool   `envconfig:"enable_raw" default:"false"`
+	ObjectId     bool   `envconfig:"object_id" default:"true"`
 }
 
 var (
@@ -76,7 +80,13 @@ func init() {
 		log.Fatal(err.Error())
 	}
 
+	if config.MqttClientId == "" {
+		config.MqttClientId = config.DeviceId
+	}
+
 	initLogging()
+
+	logInfo.Printf("starting with device id %s name %s port %s", config.DeviceId, config.DeviceName, config.SerialDevice)
 }
 
 func main() {
@@ -123,7 +133,7 @@ func handleValloxEvent(valloxDev *vallox.Vallox, e vallox.Event, cache map[byte]
 		announceRawData(mqtt, e.Register)
 	} else if val.value.RawValue == e.RawValue && time.Since(val.time) < time.Duration(15)*time.Minute {
 		// Some values are not published by the device, so manually republish to keep the device online
-		resendOldValues(valloxDev, mqtt, cache)
+		resendOldValues(valloxDev, cache)
 		// we already have that value and have recently published it, no need to publish to mqtt
 		return
 	}
@@ -224,10 +234,10 @@ func haStatusMessage(mqtt mqttClient.Client, msg mqttClient.Message) {
 func subscribe(mqtt mqttClient.Client) {
 	logDebug.Print("subscribing to topics")
 	mqtt.Subscribe("homeassistant/status", 0, haStatusMessage)
-	mqtt.Subscribe("vallox/fan/set", 0, changeSpeedMessage)
+	mqtt.Subscribe(topic(topicFanSpeedSet), 0, changeSpeedMessage)
 }
 
-func resendOldValues(device *vallox.Vallox, mqtt mqttClient.Client, cache map[byte]cacheEntry) {
+func resendOldValues(device *vallox.Vallox, cache map[byte]cacheEntry) {
 	// Speed is not automatically published by Vallox, so manually refresh the value
 	now := time.Now()
 	validTime := now.Add(time.Duration(-15) * time.Minute)
@@ -238,12 +248,12 @@ func resendOldValues(device *vallox.Vallox, mqtt mqttClient.Client, cache map[by
 
 func publishValue(mqtt mqttClient.Client, event vallox.Event) {
 
-	if topic, ok := topicMap[event.Register]; ok {
-		publish(mqtt, topic, fmt.Sprintf("%d", event.Value))
+	if t, ok := topicMap[event.Register]; ok {
+		publish(mqtt, topic(t), fmt.Sprintf("%d", event.Value))
 	}
 
 	if config.EnableRaw {
-		publish(mqtt, fmt.Sprintf("vallox/raw/%x", event.Register), fmt.Sprintf("%d", event.RawValue))
+		publish(mqtt, topic(fmt.Sprintf(topicRaw, event.Register)), fmt.Sprintf("%d", event.RawValue))
 	}
 }
 
@@ -261,24 +271,27 @@ func publish(mqtt mqttClient.Client, topic string, msg interface{}) {
 
 func discoveryMsg(uid string, name string, stateTopic string, commandTopic string) []byte {
 	msg := make(map[string]interface{})
-	msg["unique_id"] = uid
+	msg["unique_id"] = toUid(uid)
 	msg["name"] = name
+	if config.ObjectId {
+		msg["object_id"] = toUid(uid)
+	}
 
 	dev := make(map[string]string)
 	msg["device"] = dev
-	dev["identifiers"] = "vallox"
+	dev["identifiers"] = config.DeviceId
 	dev["manufacturer"] = "Vallox"
-	dev["name"] = "Vallox Digit SE"
+	dev["name"] = config.DeviceName
 	dev["model"] = "Digit SE"
 
 	if stateTopic != "" {
-		msg["state_topic"] = stateTopic
+		msg["state_topic"] = topic(stateTopic)
 	}
 	if commandTopic != "" {
-		msg["command_topic"] = commandTopic
+		msg["command_topic"] = topic(commandTopic)
 	}
 
-	if uid == "vallox_fan_select" {
+	if uid == "fan_select" {
 		min := int(config.SpeedMin)
 		var options []string
 		for i := min; i <= 8; i++ {
@@ -286,13 +299,11 @@ func discoveryMsg(uid string, name string, stateTopic string, commandTopic strin
 		}
 		msg["options"] = options
 		msg["icon"] = "mdi:fan"
-	} else if uid == "vallox_fan_speed" {
+	} else if uid == "fan_speed" {
 		msg["expire_after"] = 1800
 		msg["icon"] = "mdi:fan"
 		msg["state_class"] = "measurement"
-	}
-
-	if strings.HasPrefix(uid, "vallox_temp") {
+	} else if strings.HasPrefix(uid, "temp_") {
 		msg["unit_of_measurement"] = "°C"
 		msg["state_class"] = "measurement"
 		msg["expire_after"] = 1800
@@ -307,12 +318,12 @@ func discoveryMsg(uid string, name string, stateTopic string, commandTopic strin
 }
 
 func announceMeToMqttDiscovery(mqtt mqttClient.Client, cache map[byte]cacheEntry) {
-	publishDiscovery(mqtt, "vallox_fan_speed", "Vallox speed", topicFanSpeed)
-	publishDiscoveryFanSelect(mqtt, "vallox_fan_select", "Vallox speed select", topicFanSpeed)
-	publishDiscovery(mqtt, "vallox_temp_incoming_outside", "Vallox outdoor temperature", topicTempIncomingOutside)
-	publishDiscovery(mqtt, "vallox_temp_incoming_insise", "Vallox incoming temperature", topicTempIncomingIside)
-	publishDiscovery(mqtt, "vallox_temp_outgoing_inside", "Vallox interior temperature", topicTempOutgoingInside)
-	publishDiscovery(mqtt, "vallox_temp_outgoing_outside", "Vallox exhaust temperature", topicTempOutgoingOutside)
+	publishSensor(mqtt, "fan_speed", "speed", topicFanSpeed)
+	publishSelect(mqtt, "fan_select", "speed select", topicFanSpeed, topicFanSpeedSet)
+	publishSensor(mqtt, "temp_incoming_outside", "outdoor temperature", topicTempIncomingOutside)
+	publishSensor(mqtt, "temp_incoming_insise", "incoming temperature", topicTempIncomingIside)
+	publishSensor(mqtt, "temp_outgoing_inside", "interior temperature", topicTempOutgoingInside)
+	publishSensor(mqtt, "temp_outgoing_outside", "exhaust temperature", topicTempOutgoingOutside)
 
 	for reg := range cache {
 		announceRawData(mqtt, reg)
@@ -323,21 +334,23 @@ func announceRawData(mqtt mqttClient.Client, register byte) {
 	if !config.EnableRaw {
 		return
 	}
-	uid := fmt.Sprintf("vallox_raw_%x", register)
-	name := fmt.Sprintf("Vallox raw %x", register)
-	stateTopic := fmt.Sprintf("vallox/raw/%x", register)
-	publishDiscovery(mqtt, uid, name, stateTopic)
+	uid := fmt.Sprintf("raw_%x", register)
+	name := fmt.Sprintf("raw %x", register)
+	stateTopic := fmt.Sprintf(topicRaw, register)
+	publishSensor(mqtt, uid, name, stateTopic)
 }
 
-func publishDiscovery(mqtt mqttClient.Client, uid string, name string, stateTopic string) {
-	discoveryTopic := fmt.Sprintf("homeassistant/sensor/%s/config", uid)
-	msg := discoveryMsg(uid, name, stateTopic, "")
-	publish(mqtt, discoveryTopic, msg)
+func publishSensor(mqtt mqttClient.Client, uid string, name string, stateTopic string) {
+	publishDiscovery(mqtt, "sensor", uid, name, stateTopic, "")
 }
 
-func publishDiscoveryFanSelect(mqtt mqttClient.Client, uid string, name string, stateTopic string) {
-	discoveryTopic := fmt.Sprintf("homeassistant/select/%s/config", uid)
-	msg := discoveryMsg(uid, name, stateTopic, topicFanSpeedSet)
+func publishSelect(mqtt mqttClient.Client, uid string, name string, stateTopic string, cmdTopic string) {
+	publishDiscovery(mqtt, "select", uid, name, stateTopic, cmdTopic)
+}
+
+func publishDiscovery(mqtt mqttClient.Client, etype string, uid string, name string, stateTopic string, cmdTopic string) {
+	discoveryTopic := fmt.Sprintf("homeassistant/%s/%s/config", etype, toUid(uid))
+	msg := discoveryMsg(uid, name, stateTopic, cmdTopic)
 	publish(mqtt, discoveryTopic, msg)
 }
 
@@ -363,8 +376,16 @@ func initLogging() {
 	if config.Debug {
 		logDebug = log.New(writer, "DEBUG ", log.Ldate|log.Ltime|log.Lmsgprefix)
 	} else {
-		logDebug = log.New(ioutil.Discard, "DEBUG ", 0)
+		logDebug = log.New(io.Discard, "DEBUG ", 0)
 	}
 	logInfo = log.New(writer, "INFO  ", log.Ldate|log.Ltime|log.Lmsgprefix)
 	logError = log.New(err, "ERROR ", log.Ldate|log.Ltime|log.Lmsgprefix)
+}
+
+func toUid(uid string) string {
+	return config.DeviceId + "_" + uid
+}
+
+func topic(topic string) string {
+	return config.DeviceId + "/" + topic
 }
