@@ -27,6 +27,8 @@ Use at your own risk.
 Only tested with:
 - Vallox Digit SE model 3500 SE made in 2001 (one with old led panel, no lcd panel)
 
+Newer devices might use different registers for temperatures, try configuration NEW_PROTOCOL=true for those.
+
 Might work with other Vallox devices with rs485 bus.  There probably are some differences between different devices.  If there are those probably are easy to adapt to.
 
 The application itself has been tested running on Raspberry Pi 3, but probably works just fine with Raspberry Zero or anything running linux.
@@ -68,6 +70,7 @@ Application is configure with environment variables
 | SPEED_MIN       |          | 1       | minimum speed for the device, between 1-8.  Used for HA discovery to have correct min value in UI |
 | ENABLE_RAW      |          | false   | enable sending raw events to mqtt, otherwise only known changes are sent |
 | OBJECT_ID       |          | true    | Send object_id with HA Auto Discovery for HA entity names |
+| NEW_PROTOCOL    |          | false   | Use different registers for newer devices |
 
 ## Multiple Devices
 

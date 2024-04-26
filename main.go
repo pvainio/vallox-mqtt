@@ -32,13 +32,23 @@ const (
 	topicRaw                 = "raw/%x"
 )
 
-var topicMap = map[byte]string{
+var topicMapOld = map[byte]string{
 	vallox.FanSpeed:            topicFanSpeed,
 	vallox.TempIncomingInside:  topicTempIncomingIside,
 	vallox.TempIncomingOutside: topicTempIncomingOutside,
 	vallox.TempOutgoingInside:  topicTempOutgoingInside,
 	vallox.TempOutgoingOutside: topicTempOutgoingOutside,
 }
+
+// newer protocol?
+var topicMapNew = map[byte]string{
+	vallox.TempIncomingInsideNew:  topicTempIncomingIside,
+	vallox.TempIncomingOutsideNew: topicTempIncomingOutside,
+	vallox.TempOutgoingInsideNew:  topicTempOutgoingInside,
+	vallox.TempOutgoingOutsideNew: topicTempOutgoingOutside,
+}
+
+var topicMap map[byte]string
 
 type Config struct {
 	SerialDevice string `envconfig:"serial_device" required:"true"`
@@ -53,6 +63,7 @@ type Config struct {
 	SpeedMin     byte   `envconfig:"speed_min" default:"1"`
 	EnableRaw    bool   `envconfig:"enable_raw" default:"false"`
 	ObjectId     bool   `envconfig:"object_id" default:"true"`
+	NewProtocol  bool   `envconfig:"new_protocol" default:"false"`
 }
 
 var (
@@ -80,6 +91,12 @@ func init() {
 		log.Fatal(err.Error())
 	}
 
+	if config.NewProtocol {
+		topicMap = topicMapNew
+	} else {
+		topicMap = topicMapOld
+	}
+
 	if config.MqttClientId == "" {
 		config.MqttClientId = config.DeviceId
 	}
@@ -98,6 +115,8 @@ func main() {
 	cache := make(map[byte]cacheEntry)
 
 	announceMeToMqttDiscovery(mqtt, cache)
+
+	queryInitialValues(valloxDevice)
 
 	for {
 		select {
@@ -123,10 +142,18 @@ func main() {
 	}
 }
 
+func queryInitialValues(valloxDevice *vallox.Vallox) {
+	for register := range topicMap {
+		valloxDevice.Query(register)
+	}
+}
+
 func handleValloxEvent(valloxDev *vallox.Vallox, e vallox.Event, cache map[byte]cacheEntry, mqtt mqttClient.Client) {
 	if !valloxDev.ForMe(e) {
 		return // Ignore values not addressed for me
 	}
+
+	logDebug.Printf("received register %d value %d matching %s", e.Register, e.Value, topicMap[e.Register])
 
 	if val, ok := cache[e.Register]; !ok {
 		// First time we receive this value, send Home Assistant discovery
