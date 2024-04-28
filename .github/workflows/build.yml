@@ -20,26 +20,31 @@ jobs:
           GOOS: linux
           GOARCH: arm64
           CGO_ENABLED: 0
-        run: go build -ldflags="-s -w" -o vallox-mqtt-arm64 .
+        run: go build -ldflags="-s -w" -o vallox-mqtt/vallox-mqtt-arm64 .
       - name: Build arm
         env:
           GOOS: linux
           GOARCH: arm
           CGO_ENABLED: 0
-        run: go build -ldflags="-s -w" -o vallox-mqtt-arm .
+        run: go build -ldflags="-s -w" -o vallox-mqtt/vallox-mqtt-arm .
       - name: Build amd64
         env:
           GOOS: linux
           GOARCH: amd64
           CGO_ENABLED: 0
-        run: go build -ldflags="-s -w" -o vallox-mqtt-amd64 .
+        run: go build -ldflags="-s -w" -o vallox-mqtt/vallox-mqtt-amd64 .
+      - name: Archive Release
+        uses: thedoctor0/zip-release@0.7.6
+        with:
+          type: 'zip'
+          filename: 'vallox-mqtt-all-archs.zip'
+          path: 'vallox-mqtt'
       - name: Release
         uses: softprops/action-gh-release@v2
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: |
-            vallox-mqtt-arm64
-            vallox-mqtt-arm
-            vallox-mqtt-amd64
+            vallox-mqtt-archs.zip
           draft: true
           generate_release_notes: true
+  
