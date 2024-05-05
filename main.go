@@ -42,6 +42,7 @@ var topicMapOld = map[byte]string{
 
 // newer protocol?
 var topicMapNew = map[byte]string{
+	vallox.FanSpeed:               topicFanSpeed,
 	vallox.TempIncomingInsideNew:  topicTempIncomingIside,
 	vallox.TempIncomingOutsideNew: topicTempIncomingOutside,
 	vallox.TempOutgoingInsideNew:  topicTempOutgoingInside,
@@ -115,8 +116,10 @@ func main() {
 	cache := make(map[byte]cacheEntry)
 
 	announceMeToMqttDiscovery(mqtt, cache)
+	// query some initial values
+	queryValues(valloxDevice)
 
-	queryInitialValues(valloxDevice)
+	ticker := time.NewTicker(300 * time.Second)
 
 	for {
 		select {
@@ -135,14 +138,19 @@ func main() {
 			if status == "online" {
 				// HA became online, send discovery so it knows about entities
 				go announceMeToMqttDiscovery(mqtt, cache)
+				// resend some data
+				queryValues(valloxDevice)
 			} else if status != "offline" {
 				logInfo.Printf("unknown HA status message %s", status)
 			}
+		case <-ticker.C:
+			queryValues(valloxDevice)
 		}
 	}
 }
 
-func queryInitialValues(valloxDevice *vallox.Vallox) {
+func queryValues(valloxDevice *vallox.Vallox) {
+	logDebug.Printf("scheduled query values")
 	for register := range topicMap {
 		valloxDevice.Query(register)
 	}
@@ -268,7 +276,7 @@ func resendOldValues(device *vallox.Vallox, cache map[byte]cacheEntry) {
 	// Speed is not automatically published by Vallox, so manually refresh the value
 	now := time.Now()
 	validTime := now.Add(time.Duration(-15) * time.Minute)
-	if cached, ok := cache[vallox.FanSpeed]; ok && cached.time.Before(validTime) || !ok {
+	if cached, ok := cache[vallox.FanSpeed]; (ok && cached.time.Before(validTime)) || !ok {
 		device.Query(vallox.FanSpeed)
 	}
 }
