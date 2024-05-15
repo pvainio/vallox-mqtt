@@ -4,10 +4,10 @@ github.com/gorilla/websocket v1.5.1 h1:gmztn0JnHVt9JZquRuzLw3g4wouNVzKL15iLr/zn/
 github.com/gorilla/websocket v1.5.1/go.mod h1:x3kM2JMyaluk02fnUJpQuwD2dCS5NDG2ZHL0uE0tcaY=
 github.com/kelseyhightower/envconfig v1.4.0 h1:Im6hONhd3pLkfDFsbRgu68RDNkGF1r3dvMUtDTo2cv8=
 github.com/kelseyhightower/envconfig v1.4.0/go.mod h1:cccZRl6mQpaq41TPp5QxidR+Sa3axMbJDNb//FQX6Gg=
-github.com/pvainio/vallox-rs485 v0.0.4 h1:nvlCa9arfJMlrxcUsgev1NnabekHgk6C8Jft+WQ6qjY=
-github.com/pvainio/vallox-rs485 v0.0.4/go.mod h1:gGg7X93MjVm/hZr1igmHm1QOHp3epgX95mCaWt7/p04=
-github.com/pvainio/vallox-rs485 v0.0.5 h1:tZFFRM0rp2/fsE0gqJJfI2kfh4W+uw2fG9erAcoxVMI=
-github.com/pvainio/vallox-rs485 v0.0.5/go.mod h1:xJ4a2TAYmOO7qkl3WhWA2Il85h2bQVeR5Z7WubdjA2U=
+github.com/pvainio/vallox-rs485 v0.0.6 h1:dSFqqoPdMtEf0euSymRH0XNnUOJ9/ECyNP5lpy6CWyA=
+github.com/pvainio/vallox-rs485 v0.0.6/go.mod h1:xJ4a2TAYmOO7qkl3WhWA2Il85h2bQVeR5Z7WubdjA2U=
+github.com/pvainio/vallox-rs485 v0.0.7 h1:22lO5i9nePHQyvHzAbKAyxPUdElFF+fMZPY9QOb0+bM=
+github.com/pvainio/vallox-rs485 v0.0.7/go.mod h1:xJ4a2TAYmOO7qkl3WhWA2Il85h2bQVeR5Z7WubdjA2U=
 github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07 h1:UyzmZLoiDWMRywV4DUYb9Fbt8uiOSooupjTq10vpvnU=
 github.com/tarm/serial v0.0.0-20180830185346-98f6abe2eb07/go.mod h1:kDXzergiv9cbyO7IOYJZWg1U88JhDg3PB6klq9Hg2pA=
 golang.org/x/net v0.24.0 h1:1PcaxkF854Fu3+lvBIx5SYn9wRlBzzcnHZSiaFFAb0w=

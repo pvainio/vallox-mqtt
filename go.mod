@@ -5,7 +5,7 @@ go 1.22
 require (
 	github.com/eclipse/paho.mqtt.golang v1.4.3
 	github.com/kelseyhightower/envconfig v1.4.0
-	github.com/pvainio/vallox-rs485 v0.0.5
+	github.com/pvainio/vallox-rs485 v0.0.7
 )
 
 require (
