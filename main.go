@@ -133,6 +133,9 @@ func main() {
 
 	announceMeToMqttDiscovery(mqtt, cache)
 
+	init := time.After(5 * time.Second)
+	schedule := time.Tick(5 * time.Minute)
+
 	for {
 		select {
 		case event := <-valloxDevice.Events():
@@ -153,9 +156,9 @@ func main() {
 			} else if status != "offline" {
 				logInfo.Printf("unknown HA status message %s", status)
 			}
-		case <-time.Tick(15 * time.Minute):
+		case <-schedule:
 			queryValues(valloxDevice, cache)
-		case <-time.After(time.Second):
+		case <-init:
 			// query initial values
 			queryValues(valloxDevice, cache)
 		}
@@ -167,17 +170,20 @@ func handleValloxEvent(valloxDev *vallox.Vallox, e vallox.Event, cache map[byte]
 		return // Ignore values not addressed for me
 	}
 
-	logDebug.Printf("received register %d value %d matching %s", e.Register, e.Value, topicMap[e.Register])
+	logDebug.Printf("received register %x value %x matching %s", e.Register, e.Value, topicMap[e.Register])
 
-	if val, ok := cache[e.Register]; !ok {
+	cached, hit := cache[e.Register]
+	if !hit {
 		// First time we receive this value, send Home Assistant discovery
 		announceRawData(mqtt, e.Register)
-	} else if val.value.RawValue == e.RawValue && time.Since(val.time) < time.Duration(1)*time.Minute {
-		// we already have the value and have recently published it, no need to publish to mqtt
+	}
+
+	if !hit || cached.value.RawValue != e.RawValue || time.Since(cached.time) > time.Duration(1)*time.Minute {
+		go publishValue(mqtt, e)
 		return
 	}
 
-	cached := cacheEntry{time: time.Now(), value: e}
+	cached = cacheEntry{time: time.Now(), value: e}
 	cache[e.Register] = cached
 
 	if e.Register == vallox.FanSpeed {
@@ -185,7 +191,7 @@ func handleValloxEvent(valloxDev *vallox.Vallox, e vallox.Event, cache map[byte]
 		currentSpeedUpdated = cached.time
 	}
 
-	go publishValue(mqtt, cached.value)
+	queryValues(valloxDev, cache)
 }
 
 func sendSpeed(valloxDevice *vallox.Vallox) {
@@ -395,11 +401,11 @@ func publishSelect(mqtt mqttClient.Client, uid string, name string, stateTopic s
 
 func publishDiscovery(mqtt mqttClient.Client, etype string, uid string, name string, stateTopic string, cmdTopic string) {
 	discoveryTopic := fmt.Sprintf("homeassistant/%s/%s/config", etype, toUid(uid))
-	if _, ok := announced[stateTopic]; ok {
+	if _, ok := announced[discoveryTopic]; ok {
 		// already announced
 		return
 	}
-	announced[stateTopic] = true
+	announced[discoveryTopic] = true
 	msg := discoveryMsg(uid, name, stateTopic, cmdTopic)
 	publish(mqtt, discoveryTopic, msg)
 }
