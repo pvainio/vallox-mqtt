@@ -180,18 +180,13 @@ func handleValloxEvent(valloxDev *vallox.Vallox, e vallox.Event, cache map[byte]
 
 	if !hit || cached.value.RawValue != e.RawValue || time.Since(cached.time) > time.Duration(1)*time.Minute {
 		go publishValue(mqtt, e)
-		return
+		cached = cacheEntry{time: time.Now(), value: e}
+		cache[e.Register] = cached
+		if e.Register == vallox.FanSpeed {
+			currentSpeed = byte(e.Value)
+			currentSpeedUpdated = cached.time
+		}
 	}
-
-	cached = cacheEntry{time: time.Now(), value: e}
-	cache[e.Register] = cached
-
-	if e.Register == vallox.FanSpeed {
-		currentSpeed = byte(e.Value)
-		currentSpeedUpdated = cached.time
-	}
-
-	queryValues(valloxDev, cache)
 }
 
 func sendSpeed(valloxDevice *vallox.Vallox) {
