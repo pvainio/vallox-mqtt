@@ -318,7 +318,7 @@ func discoveryMsg(uid string, name string, stateTopic string, commandTopic strin
 	msg["unique_id"] = toUid(uid)
 	msg["name"] = name
 	if config.ObjectId {
-		msg["object_id"] = toUid(uid)
+		msg["default_entity_id"] = toUid(uid)
 	}
 
 	dev := make(map[string]string)
